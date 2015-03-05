@@ -15,51 +15,100 @@
 
 package io.prediction.tools.admin
 
+import java.io.File
+
+import io.prediction.controller.Utils
 import io.prediction.data.storage._
+import org.apache.commons.io.FileUtils
+import org.json4s.MappingException
+import org.json4s.native.Serialization._
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.io.Source
+import scala.util.Random
 
 abstract class BaseResponse()
 
 case class GeneralResponse(
-  status: Int = 0,
-  message: String = ""
-) extends BaseResponse()
+                            status: Int = 0,
+                            message: String = ""
+                            ) extends BaseResponse()
 
 case class AppRequest(
-  id: Int = 0,
-  name: String = "",
-  description: String = ""
-)
+                       id: Int = 0,
+                       name: String = "",
+                       description: String = ""
+                       )
 
 case class TrainRequest(
-  enginePath: String = ""
-)
+                         enginePath: String = "",
+                         engineId: String = "",
+                         engineVersion: String = ""
+                         )
+
 case class AppResponse(
-  id: Int = 0,
-  name: String = "",
-  keys: Seq[AccessKey]
-) extends BaseResponse()
+                        id: Int = 0,
+                        name: String = "",
+                        keys: Seq[AccessKey]
+                        ) extends BaseResponse()
 
 case class AppNewResponse(
-  status: Int = 0,
-  message: String = "",
-  id: Int = 0,
-  name: String = "",
-  key: String
-) extends BaseResponse()
+                           status: Int = 0,
+                           message: String = "",
+                           id: Int = 0,
+                           name: String = "",
+                           key: String
+                           ) extends BaseResponse()
 
 case class AppListResponse(
-  status: Int = 0,
-  message: String = "",
-  apps: Seq[AppResponse]
-) extends BaseResponse()
+                            status: Int = 0,
+                            message: String = "",
+                            apps: Seq[AppResponse]
+                            ) extends BaseResponse()
 
 class CommandClient(
-  val appClient: Apps,
-  val accessKeyClient: AccessKeys,
-  val eventClient: LEvents
-) {
+                     val appClient: Apps,
+                     val accessKeyClient: AccessKeys,
+                     val eventClient: LEvents
+                     ) {
+
+  val manifestAutogenTag = "pio-autogen-manifest"
+
+  def generateManifestJson(json: File): File = {
+    val cwd = sys.props("user.dir")
+    implicit val formats = Utils.json4sDefaultFormats +
+      new EngineManifestSerializer
+    val rand = Random.alphanumeric.take(32).mkString
+    val ha = java.security.MessageDigest.getInstance("SHA-1").
+      digest(cwd.getBytes).map("%02x".format(_)).mkString
+    val em = EngineManifest(
+      id = rand,
+      version = ha,
+      name = new File(cwd).getName,
+      description = Some(manifestAutogenTag),
+      files = Seq(),
+      engineFactory = "")
+    try {
+      FileUtils.writeStringToFile(json, write(em), "ISO-8859-1")
+      json
+    } catch {
+      case e: java.io.IOException =>
+        null
+    }
+  }
+
+  def readManifestJson(json: File): EngineManifest = {
+    implicit val formats = Utils.json4sDefaultFormats +
+      new EngineManifestSerializer
+    try {
+      read[EngineManifest](Source.fromFile(json).mkString)
+    } catch {
+      case e: java.io.FileNotFoundException =>
+        null
+      case e: MappingException =>
+        null
+    }
+  }
 
   def futureAppNew(req: AppRequest)(implicit ec: ExecutionContext): Future[BaseResponse] = Future {
     val response = appClient.getByName(req.name) map { app =>
@@ -86,7 +135,7 @@ class CommandClient(
               appid = id,
               events = Seq()))
             accessKey2 map { k =>
-              new AppNewResponse(1,"App created successfully.",id, req.name, k)
+              new AppNewResponse(1, "App created successfully.", id, req.name, k)
             } getOrElse {
               GeneralResponse(0, s"Unable to create new access key.")
             }
@@ -154,6 +203,43 @@ class CommandClient(
   }
 
   def futureTrain(req: TrainRequest)(implicit ec: ExecutionContext): Future[GeneralResponse] = Future {
-    return null;
+
+    val engineDir = new File(req.enginePath)
+    val response = if (engineDir.isDirectory()) {
+      var manifestJson = new File(engineDir.getAbsolutePath() + File.separator + "manifest.json")
+
+      if (!manifestJson.exists()) {
+        manifestJson = generateManifestJson(manifestJson)
+      }
+
+      val ej = readManifestJson(manifestJson)
+
+      if (ej != null) {
+
+        val id = if (req.engineId != "") {
+          req.engineId
+        } else {
+          ej.id
+        }
+
+        val version = if (req.engineVersion != "") {
+          req.engineVersion
+        } else {
+          ej.version
+        }
+
+        Storage.getMetaDataEngineManifests.get(id, version) map {
+          em =>
+            GeneralResponse(1, s"Train will be started.")
+        } getOrElse {
+          GeneralResponse(0, s"Invalid manifest file or unable to create one automatically")
+        }
+      } else {
+        GeneralResponse(0, s"Invalid manifest file or unable to create one automatically")
+      }
+    } else {
+      GeneralResponse(0, s"Invalid path provided.")
+    }
+    response
   }
 }

@@ -4,7 +4,7 @@
   * you may not use this file except in compliance with the License.
   * You may obtain a copy of the License at
   *
-  *     http://www.apache.org/licenses/LICENSE-2.0
+  * http://www.apache.org/licenses/LICENSE-2.0
   *
   * Unless required by applicable law or agreed to in writing, software
   * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +22,7 @@ import akka.util.Timeout
 import io.prediction.data.api.StartServer
 import io.prediction.data.storage.Storage
 import org.json4s.DefaultFormats
+
 //import org.json4s.ext.JodaTimeSerializers
 
 import java.util.concurrent.TimeUnit
@@ -37,6 +38,7 @@ class AdminServiceActor(val commandClient: CommandClient)
 
   object Json4sProtocol extends Json4sSupport {
     implicit def json4sFormats = DefaultFormats
+
     //implicit def json4sFormats: Formats = DefaultFormats.lossless ++
     //  JodaTimeSerializers.all
   }
@@ -48,6 +50,7 @@ class AdminServiceActor(val commandClient: CommandClient)
   // we use the enclosing ActorContext's or ActorSystem's dispatcher for our
   // Futures
   implicit def executionContext = actorRefFactory.dispatcher
+
   implicit val timeout = Timeout(5, TimeUnit.SECONDS)
 
   // for better message response
@@ -103,7 +106,17 @@ class AdminServiceActor(val commandClient: CommandClient)
               }
             }
           }
+      } ~
+      path("cmd" / "train") {
+        post {
+          entity(as[TrainRequest]) {
+            trainArgs => respondWithMediaType(MediaTypes.`application/json`) {
+              complete(commandClient.futureTrain(trainArgs))
+            }
+          }
+        }
       }
+
   def receive = runRoute(route)
 }
 
@@ -118,7 +131,7 @@ class AdminServerActor(val commandClient: CommandClient) extends Actor {
   def receive = {
     case StartServer(host, portNum) => {
       IO(Http) ! Http.Bind(child, interface = host, port = portNum)
-      
+
     }
     case m: Http.Bound => log.info("Bound received. AdminServer is ready.")
     case m: Http.CommandFailed => log.error("Command failed.")
@@ -127,9 +140,9 @@ class AdminServerActor(val commandClient: CommandClient) extends Actor {
 }
 
 case class AdminServerConfig(
-  ip: String = "localhost",
-  port: Int = 7071
-)
+                              ip: String = "localhost",
+                              port: Int = 7071
+                              )
 
 object AdminServer {
   def createAdminServer(config: AdminServerConfig) = {
@@ -150,7 +163,7 @@ object AdminServer {
 }
 
 object AdminRun {
-  def main (args: Array[String]) {
+  def main(args: Array[String]) {
     AdminServer.createAdminServer(AdminServerConfig(
       ip = "localhost",
       port = 7071))
